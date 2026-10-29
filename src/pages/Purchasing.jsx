@@ -1,28 +1,94 @@
 import { Fragment, useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Plus, Truck, PackageCheck, Wallet, Trash2, Phone, ChevronDown, ChevronUp, Pencil, Download, History } from 'lucide-react';
+import {
+  Plus, Truck, PackageCheck, Wallet, Trash2, Phone, ChevronDown, ChevronUp, Pencil, Download, History,
+  Eye, Copy, Printer, Clock, CheckCircle2, XCircle, X,
+} from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { useToast } from '../context/ToastContext';
-import { Button, Badge, Tabs, Modal, Field, StatCard, EmptyState } from '../components/ui';
-import { money, uid, fmtDate, toDateKey, downloadCSV } from '../utils/format';
+import { Button, Tabs, Modal, Field, StatCard, EmptyState, SearchInput } from '../components/ui';
+import { money, uid, fmtDate, toDateKey, downloadCSV, startOfDayOffset } from '../utils/format';
 import { PURCHASE_STATUS } from '../data/labels';
+
+const PAGE_SIZE = 8;
+const STATUS_ICON = { ordered: Clock, received: PackageCheck, paid: CheckCircle2, cancelled: XCircle };
+const STATUS_TEXT_COLOR = { blue: 'text-blue-600', amber: 'text-amber-600', green: 'text-emerald-600', red: 'text-rose-600', slate: 'text-slate-500' };
+const PAY_METHODS = { cash: 'Naqd', card: 'Karta', transfer: "Bank o'tkazmasi" };
+
+function StatusTag({ status }) {
+  const meta = PURCHASE_STATUS[status] || { label: status, color: 'slate' };
+  const Icon = STATUS_ICON[status] || Clock;
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-sm font-medium ${STATUS_TEXT_COLOR[meta.color] || 'text-slate-600'}`}>
+      <Icon size={15} /> {meta.label}
+    </span>
+  );
+}
+
+function printPurchase(p, supplierName) {
+  const w = window.open('', '_blank', 'width=720,height=900');
+  if (!w) return;
+  const rows = p.items
+    .map((i) => `<tr><td>${i.name}</td><td style="text-align:right">${i.qty} ${i.unit}</td><td style="text-align:right">${money(i.price)}</td><td style="text-align:right">${money(i.qty * i.price)}</td></tr>`)
+    .join('');
+  w.document.write(`<!doctype html><html><head><title>Xarid #${p.number}</title>
+    <style>
+      body{font-family:Arial,sans-serif;padding:28px;color:#1e293b}
+      h2{margin:0 0 4px}
+      table{width:100%;border-collapse:collapse;margin-top:14px}
+      th,td{border-bottom:1px solid #e2e8f0;padding:6px 4px;font-size:13px}
+      th{text-align:left;color:#64748b}
+      .meta{color:#64748b;font-size:13px;margin-top:2px}
+      .totals{margin-top:14px;text-align:right;font-size:13px}
+      .totals b{font-size:15px}
+    </style></head><body>
+    <h2>Xarid buyurtmasi #${p.number}</h2>
+    <div class="meta">Yetkazib beruvchi: <b>${supplierName}</b></div>
+    <div class="meta">Sana: ${fmtDate(p.createdAt)} &middot; Holat: ${PURCHASE_STATUS[p.status]?.label || p.status}</div>
+    <table><thead><tr><th>Mahsulot</th><th style="text-align:right">Miqdor</th><th style="text-align:right">Narx</th><th style="text-align:right">Summa</th></tr></thead>
+    <tbody>${rows}</tbody></table>
+    <div class="totals">Jami: <b>${money(p.total)}</b></div>
+    <div class="totals">To'langan: ${money(p.paid)}</div>
+    <div class="totals">Qarz: ${money(p.total - p.paid)}</div>
+    ${p.note ? `<div class="meta" style="margin-top:10px">Izoh: ${p.note}</div>` : ''}
+  </body></html>`);
+  w.document.close();
+  w.focus();
+  w.print();
+}
 
 export default function Purchasing() {
   const { state, dispatch } = useApp();
   const toast = useToast();
   const location = useLocation();
   const navigate = useNavigate();
-  const [initialRows] = useState(location.state?.prefill || null);
   const [tab, setTab] = useState('orders');
-  const [createOpen, setCreateOpen] = useState(!!initialRows);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createPrefill, setCreatePrefill] = useState(null);
   const [payFor, setPayFor] = useState(null);
   const [payAmount, setPayAmount] = useState('');
+  const [payMethod, setPayMethod] = useState('cash');
   const [supplier, setSupplier] = useState(null);
   const [expanded, setExpanded] = useState(null);
   const [priceHistoryFor, setPriceHistoryFor] = useState(null);
+  const [viewFor, setViewFor] = useState(null);
+
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [supplierFilter, setSupplierFilter] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [debtOnly, setDebtOnly] = useState(false);
+  const [sortKey, setSortKey] = useState('date');
+  const [sortDir, setSortDir] = useState('desc');
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
-    if (location.state?.prefill) navigate(location.pathname, { replace: true, state: null });
+    if (location.state?.prefill) {
+      setCreatePrefill({ rows: location.state.prefill });
+      setCreateOpen(true);
+      navigate(location.pathname, { replace: true, state: null });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -30,22 +96,94 @@ export default function Purchasing() {
   const debtOf = (sid) => state.purchases.filter((p) => p.supplierId === sid && !['ordered', 'cancelled'].includes(p.status)).reduce((s, p) => s + (p.total - p.paid), 0);
   const totalDebt = state.suppliers.reduce((s, sp) => s + debtOf(sp.id), 0);
   const pendingCount = state.purchases.filter((p) => p.status === 'ordered').length;
+  const last30From = toDateKey(startOfDayOffset(30));
   const monthTotal = state.purchases.filter((p) => p.status !== 'cancelled' && Date.now() - new Date(p.createdAt) < 30 * 86400000).reduce((s, p) => s + p.total, 0);
+
+  const hasActiveFilters = !!(search || statusFilter !== 'all' || supplierFilter !== 'all' || dateFrom || dateTo || debtOnly);
+  const clearFilters = () => {
+    setSearch(''); setStatusFilter('all'); setSupplierFilter('all'); setDateFrom(''); setDateTo(''); setDebtOnly(false); setPage(1);
+  };
+
+  const sortValue = (p, key) => {
+    if (key === 'number') return p.number;
+    if (key === 'date') return new Date(p.createdAt).getTime();
+    if (key === 'total') return p.total;
+    if (key === 'paid') return p.paid;
+    if (key === 'debt') return p.total - p.paid;
+    return 0;
+  };
+  const SortIcon = ({ k }) =>
+    sortKey === k ? (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : <ChevronDown size={12} className="opacity-20" />;
+  const toggleSort = (key) => {
+    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(key); setSortDir('desc'); }
+  };
+
+  const filteredPurchases = state.purchases
+    .filter((p) => {
+      if (statusFilter !== 'all' && p.status !== statusFilter) return false;
+      if (supplierFilter !== 'all' && p.supplierId !== supplierFilter) return false;
+      if (debtOnly && (p.status === 'cancelled' || p.total - p.paid <= 0)) return false;
+      const dKey = toDateKey(p.createdAt);
+      if (dateFrom && dKey < dateFrom) return false;
+      if (dateTo && dKey > dateTo) return false;
+      if (search.trim()) {
+        const q = search.trim().toLowerCase();
+        const hit = String(p.number).includes(q) || supName(p.supplierId).toLowerCase().includes(q) || p.items.some((i) => i.name.toLowerCase().includes(q));
+        if (!hit) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => (sortDir === 'asc' ? sortValue(a, sortKey) - sortValue(b, sortKey) : sortValue(b, sortKey) - sortValue(a, sortKey)));
+
+  const totalPages = Math.max(1, Math.ceil(filteredPurchases.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pageRows = filteredPurchases.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
+  const duplicatePurchase = (p) => {
+    setCreatePrefill({ supplierId: p.supplierId, rows: p.items.map((i) => ({ ingredientId: i.ingredientId, qty: i.qty, price: i.price })) });
+    setCreateOpen(true);
+  };
 
   const exportCSV = () => {
     downloadCSV(`xaridlar_${toDateKey(new Date())}.csv`, [
       ['№', 'Yetkazib beruvchi', 'Sana', 'Mahsulotlar soni', 'Summa', "To'langan", 'Qarz', 'Holat'],
-      ...state.purchases.map((p) => [p.number, supName(p.supplierId), fmtDate(p.createdAt), p.items.length, p.total, p.paid, p.total - p.paid, PURCHASE_STATUS[p.status]?.label || p.status]),
+      ...filteredPurchases.map((p) => [p.number, supName(p.supplierId), fmtDate(p.createdAt), p.items.length, p.total, p.paid, p.total - p.paid, PURCHASE_STATUS[p.status]?.label || p.status]),
     ]);
+    toast(`${filteredPurchases.length} ta xarid eksport qilindi (joriy filtr bo'yicha)`, 'success');
   };
 
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard label="Yetkazib beruvchilar" value={state.suppliers.length} icon={Truck} color="blue" />
-        <StatCard label="Kutilayotgan buyurtmalar" value={pendingCount} icon={PackageCheck} color="amber" />
-        <StatCard label="30 kunlik xarid" value={money(monthTotal)} icon={Wallet} color="green" />
-        <StatCard label="Umumiy qarz" value={money(totalDebt)} icon={Wallet} color="red" />
+        <StatCard label="Yetkazib beruvchilar" value={state.suppliers.length} icon={Truck} color="blue" onClick={() => setTab('suppliers')} />
+        <StatCard
+          label="Kutilayotgan buyurtmalar"
+          value={pendingCount}
+          icon={PackageCheck}
+          color="amber"
+          hint="Faqat 'Buyurtma berildi' holatidagilar"
+          active={tab === 'orders' && statusFilter === 'ordered'}
+          onClick={() => { setTab('orders'); setStatusFilter('ordered'); setPage(1); }}
+        />
+        <StatCard
+          label="30 kunlik xarid"
+          value={money(monthTotal)}
+          icon={Wallet}
+          color="green"
+          hint="Bekor qilinganlar hisobga kirmaydi"
+          active={tab === 'orders' && dateFrom === last30From && !dateTo}
+          onClick={() => { setTab('orders'); setDateFrom(last30From); setDateTo(''); setPage(1); }}
+        />
+        <StatCard
+          label="Umumiy qarz"
+          value={money(totalDebt)}
+          icon={Wallet}
+          color="red"
+          hint="Bekor qilinganlar bundan mustasno"
+          active={tab === 'orders' && debtOnly}
+          onClick={() => { setTab('orders'); setDebtOnly(true); setPage(1); }}
+        />
       </div>
 
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
@@ -53,59 +191,134 @@ export default function Purchasing() {
         <div className="flex gap-2">
           {tab === 'orders' && <Button variant="secondary" icon={Download} onClick={exportCSV}>CSV eksport</Button>}
           <Button variant="secondary" icon={Plus} onClick={() => setSupplier({ id: uid(), name: '', phone: '', category: '', contact: '', address: '', isNew: true })}>Yetkazib beruvchi</Button>
-          <Button icon={Plus} onClick={() => setCreateOpen(true)}>Xarid buyurtmasi</Button>
+          <Button icon={Plus} onClick={() => { setCreatePrefill(null); setCreateOpen(true); }}>Xarid buyurtmasi</Button>
         </div>
       </div>
 
       {tab === 'orders' && (
         <div className="card overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="tbl">
-              <thead><tr><th>№</th><th>Yetkazib beruvchi</th><th>Sana</th><th>Mahsulotlar</th><th className="text-right">Summa</th><th className="text-right">To'langan</th><th>Holat</th><th /></tr></thead>
-              <tbody>
-                {state.purchases.map((p) => (
-                  <Fragment key={p.id}>
+          {state.purchases.length > 0 && (
+            <div className="p-3 border-b border-slate-100 flex flex-wrap items-center gap-2">
+              <SearchInput value={search} onChange={(v) => { setSearch(v); setPage(1); }} placeholder="№, yetkazib beruvchi, mahsulot..." className="w-full sm:w-60" />
+              <select className="input w-auto" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}>
+                <option value="all">Barcha holatlar</option>
+                {Object.entries(PURCHASE_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+              </select>
+              <select className="input w-auto" value={supplierFilter} onChange={(e) => { setSupplierFilter(e.target.value); setPage(1); }}>
+                <option value="all">Barcha yetkazib beruvchilar</option>
+                {state.suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <div className="flex items-center gap-1.5">
+                <input type="date" className="input w-auto" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} />
+                <span className="text-slate-400 text-sm">—</span>
+                <input type="date" className="input w-auto" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} />
+              </div>
+              <button
+                type="button"
+                onClick={() => { setDebtOnly((d) => !d); setPage(1); }}
+                className={`text-xs px-2.5 py-1.5 rounded-lg border whitespace-nowrap ${debtOnly ? 'bg-rose-50 border-rose-200 text-rose-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+              >
+                Faqat qarzdorlar
+              </button>
+              {hasActiveFilters && <Button size="sm" variant="ghost" icon={X} onClick={clearFilters}>Tozalash</Button>}
+            </div>
+          )}
+
+          {filteredPurchases.length > 0 ? (
+            <>
+              <div className="overflow-x-auto">
+                <table className="tbl">
+                  <thead>
                     <tr>
-                      <td className="font-medium">#{p.number}</td>
-                      <td>{supName(p.supplierId)}</td>
-                      <td className="text-slate-500">{fmtDate(p.createdAt)}</td>
-                      <td>
-                        <button type="button" onClick={() => setExpanded(expanded === p.id ? null : p.id)} className="flex items-center gap-1 text-blue-600 text-sm">
-                          {p.items.length} ta {expanded === p.id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                        </button>
-                      </td>
-                      <td className="text-right font-semibold tabular-nums">{money(p.total)}</td>
-                      <td className="text-right tabular-nums text-slate-500">{money(p.paid)}</td>
-                      <td><Badge color={PURCHASE_STATUS[p.status].color}>{PURCHASE_STATUS[p.status].label}</Badge></td>
-                      <td className="text-right whitespace-nowrap space-x-1">
-                        {p.status === 'ordered' && <Button size="xs" variant="soft" onClick={() => { dispatch({ type: 'RECEIVE_PURCHASE', id: p.id }); toast('Mahsulotlar omborga qabul qilindi', 'success'); }}>Qabul qilish</Button>}
-                        {p.status === 'ordered' && (
-                          <Button size="xs" variant="ghost" className="text-rose-600" onClick={() => { dispatch({ type: 'CANCEL_PURCHASE', id: p.id }); toast('Xarid bekor qilindi'); }}>Bekor</Button>
-                        )}
-                        {p.status !== 'cancelled' && p.paid < p.total && <Button size="xs" variant="success" onClick={() => { setPayFor(p); setPayAmount(String(p.total - p.paid)); }}>To'lash</Button>}
-                      </td>
+                      <th><button type="button" className="inline-flex items-center gap-1" onClick={() => toggleSort('number')}>№ <SortIcon k="number" /></button></th>
+                      <th>Yetkazib beruvchi</th>
+                      <th><button type="button" className="inline-flex items-center gap-1" onClick={() => toggleSort('date')}>Sana <SortIcon k="date" /></button></th>
+                      <th>Mahsulotlar</th>
+                      <th className="text-right"><button type="button" className="inline-flex items-center gap-1 ml-auto" onClick={() => toggleSort('total')}>Summa <SortIcon k="total" /></button></th>
+                      <th className="text-right"><button type="button" className="inline-flex items-center gap-1 ml-auto" onClick={() => toggleSort('paid')}>To'langan <SortIcon k="paid" /></button></th>
+                      <th className="text-right"><button type="button" className="inline-flex items-center gap-1 ml-auto" onClick={() => toggleSort('debt')}>Qarz <SortIcon k="debt" /></button></th>
+                      <th>Holat</th>
+                      <th />
                     </tr>
-                    {expanded === p.id && (
-                      <tr>
-                        <td colSpan={8} className="bg-slate-50">
-                          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                            {p.items.map((i) => (
-                              <div key={i.ingredientId} className="text-sm flex justify-between bg-white rounded-lg px-3 py-2 border border-slate-100">
-                                <span>{i.name}</span>
-                                <span className="text-slate-500">{i.qty} {i.unit} × {money(i.price)}</span>
-                              </div>
-                            ))}
-                          </div>
-                          {p.note && <div className="text-xs text-slate-500 mt-2">Izoh: {p.note}</div>}
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                ))}
-              </tbody>
-            </table>
-            {!state.purchases.length && <EmptyState title="Xaridlar yo'q" />}
-          </div>
+                  </thead>
+                  <tbody>
+                    {pageRows.map((p) => {
+                      const debt = p.total - p.paid;
+                      return (
+                        <Fragment key={p.id}>
+                          <tr>
+                            <td className="font-medium">#{p.number}</td>
+                            <td>{supName(p.supplierId)}</td>
+                            <td className="text-slate-500">{fmtDate(p.createdAt)}</td>
+                            <td>
+                              <div className="text-sm text-slate-700 truncate max-w-[160px]">{p.items[0]?.name}{p.items.length > 1 ? ` +${p.items.length - 1}` : ''}</div>
+                              <button type="button" onClick={() => setExpanded(expanded === p.id ? null : p.id)} className="flex items-center gap-1 text-blue-600 text-xs mt-0.5">
+                                {p.items.length} ta {expanded === p.id ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                              </button>
+                            </td>
+                            <td className="text-right font-semibold tabular-nums">{money(p.total)}</td>
+                            <td className="text-right tabular-nums text-slate-500">{money(p.paid)}</td>
+                            <td className={`text-right tabular-nums ${debt > 0 ? 'text-rose-600 font-medium' : 'text-slate-400'}`}>{money(debt)}</td>
+                            <td><StatusTag status={p.status} /></td>
+                            <td className="text-right whitespace-nowrap space-x-0.5">
+                              <button type="button" title="Ko'rish" onClick={() => setViewFor(p)} className="p-1.5 text-slate-400 hover:text-blue-600 inline-flex"><Eye size={15} /></button>
+                              <button type="button" title="Nusxalash" onClick={() => duplicatePurchase(p)} className="p-1.5 text-slate-400 hover:text-blue-600 inline-flex"><Copy size={15} /></button>
+                              <button type="button" title="Chop etish" onClick={() => printPurchase(p, supName(p.supplierId))} className="p-1.5 text-slate-400 hover:text-blue-600 inline-flex"><Printer size={15} /></button>
+                              {p.status === 'ordered' && <Button size="xs" variant="soft" onClick={() => { dispatch({ type: 'RECEIVE_PURCHASE', id: p.id }); toast('Mahsulotlar omborga qabul qilindi', 'success'); }}>Qabul qilish</Button>}
+                              {p.status === 'ordered' && (
+                                <Button size="xs" variant="ghost" className="text-rose-600" onClick={() => { dispatch({ type: 'CANCEL_PURCHASE', id: p.id }); toast('Xarid bekor qilindi'); }}>Bekor</Button>
+                              )}
+                              {p.status !== 'cancelled' && p.paid < p.total && (
+                                <Button size="xs" variant="success" onClick={() => { setPayFor(p); setPayAmount(String(p.total - p.paid)); setPayMethod('cash'); }}>To'lash</Button>
+                              )}
+                            </td>
+                          </tr>
+                          {expanded === p.id && (
+                            <tr>
+                              <td colSpan={9} className="bg-slate-50">
+                                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                                  {p.items.map((i) => (
+                                    <div key={i.ingredientId} className="text-sm flex justify-between bg-white rounded-lg px-3 py-2 border border-slate-100">
+                                      <span>{i.name}</span>
+                                      <span className="text-slate-500">{i.qty} {i.unit} × {money(i.price)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                                {p.note && <div className="text-xs text-slate-500 mt-2">Izoh: {p.note}</div>}
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="font-semibold bg-slate-50">
+                      <td colSpan={4} className="text-slate-500 font-medium">Jami ({filteredPurchases.length} ta)</td>
+                      <td className="text-right tabular-nums">{money(filteredPurchases.reduce((s, p) => s + p.total, 0))}</td>
+                      <td className="text-right tabular-nums">{money(filteredPurchases.reduce((s, p) => s + p.paid, 0))}</td>
+                      <td className="text-right tabular-nums text-rose-600">{money(filteredPurchases.reduce((s, p) => s + (p.total - p.paid), 0))}</td>
+                      <td colSpan={2} />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+              {filteredPurchases.length > PAGE_SIZE && (
+                <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 text-sm text-slate-500">
+                  <span>{filteredPurchases.length} tadan {(currentPage - 1) * PAGE_SIZE + 1}-{Math.min(currentPage * PAGE_SIZE, filteredPurchases.length)}</span>
+                  <div className="flex items-center gap-2">
+                    <Button size="xs" variant="secondary" disabled={currentPage <= 1} onClick={() => setPage((p) => p - 1)}>Oldingi</Button>
+                    <span className="px-1">{currentPage} / {totalPages}</span>
+                    <Button size="xs" variant="secondary" disabled={currentPage >= totalPages} onClick={() => setPage((p) => p + 1)}>Keyingi</Button>
+                  </div>
+                </div>
+              )}
+            </>
+          ) : state.purchases.length > 0 ? (
+            <EmptyState title="Natija topilmadi" text="Filtr yoki qidiruv shartlariga mos xarid yo'q" action={<Button size="sm" variant="secondary" icon={X} onClick={clearFilters}>Filtrlarni tozalash</Button>} />
+          ) : (
+            <EmptyState title="Xaridlar yo'q" text="Birinchi xarid buyurtmasini yarating" action={<Button size="sm" icon={Plus} onClick={() => setCreateOpen(true)}>Xarid buyurtmasi</Button>} />
+          )}
         </div>
       )}
 
@@ -159,7 +372,51 @@ export default function Purchasing() {
         </div>
       )}
 
-      <PurchaseModal open={createOpen} initialRows={initialRows} onClose={() => setCreateOpen(false)} />
+      <PurchaseModal open={createOpen} prefill={createPrefill} onClose={() => { setCreateOpen(false); setCreatePrefill(null); }} />
+
+      <Modal
+        open={!!viewFor}
+        onClose={() => setViewFor(null)}
+        title={`Xarid #${viewFor?.number}`}
+        size="md"
+        footer={
+          <>
+            <Button variant="secondary" icon={Printer} onClick={() => printPurchase(viewFor, supName(viewFor.supplierId))}>Chop etish</Button>
+            <Button variant="secondary" onClick={() => setViewFor(null)}>Yopish</Button>
+          </>
+        }
+      >
+        {viewFor && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between text-sm">
+              <div>
+                <div className="font-medium text-slate-800">{supName(viewFor.supplierId)}</div>
+                <div className="text-slate-500">{fmtDate(viewFor.createdAt)}</div>
+              </div>
+              <StatusTag status={viewFor.status} />
+            </div>
+            <table className="tbl">
+              <thead><tr><th>Mahsulot</th><th className="text-right">Miqdor</th><th className="text-right">Narx</th><th className="text-right">Summa</th></tr></thead>
+              <tbody>
+                {viewFor.items.map((i) => (
+                  <tr key={i.ingredientId}>
+                    <td>{i.name}</td>
+                    <td className="text-right text-slate-500">{i.qty} {i.unit}</td>
+                    <td className="text-right tabular-nums">{money(i.price)}</td>
+                    <td className="text-right tabular-nums font-medium">{money(i.qty * i.price)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="flex justify-end gap-6 text-sm pt-2 border-t border-slate-100">
+              <div>Jami: <b>{money(viewFor.total)}</b></div>
+              <div className="text-emerald-600">To'langan: {money(viewFor.paid)}</div>
+              <div className="text-rose-600">Qarz: {money(viewFor.total - viewFor.paid)}</div>
+            </div>
+            {viewFor.note && <div className="text-xs text-slate-500">Izoh: {viewFor.note}</div>}
+          </div>
+        )}
+      </Modal>
 
       <Modal
         open={!!payFor}
@@ -169,7 +426,20 @@ export default function Purchasing() {
         footer={
           <>
             <Button variant="secondary" onClick={() => setPayFor(null)}>Bekor</Button>
-            <Button variant="success" onClick={() => { dispatch({ type: 'PAY_PURCHASE', id: payFor.id, amount: +payAmount }); setPayFor(null); toast("To'lov saqlandi va xarajatlarga yozildi", 'success'); }}>To'lash</Button>
+            <Button
+              variant="success"
+              onClick={() => {
+                const amt = +payAmount;
+                const remaining = payFor.total - payFor.paid;
+                if (!amt || amt <= 0) return toast('Summani kiriting', 'error');
+                if (amt > remaining) return toast("Summa qoldiqdan katta bo'lishi mumkin emas", 'error');
+                dispatch({ type: 'PAY_PURCHASE', id: payFor.id, amount: amt, method: payMethod });
+                setPayFor(null);
+                toast(amt < remaining ? "Qisman to'lov saqlandi va xarajatlarga yozildi" : "To'lov saqlandi va xarajatlarga yozildi", 'success');
+              }}
+            >
+              To'lash
+            </Button>
           </>
         }
       >
@@ -177,6 +447,15 @@ export default function Purchasing() {
           <div className="space-y-3">
             <div className="text-sm text-slate-500">Qoldiq: <b className="text-slate-800">{money(payFor.total - payFor.paid)}</b></div>
             <Field label="Summa"><input type="number" className="input" value={payAmount} onChange={(e) => setPayAmount(e.target.value)} /></Field>
+            <div className="flex gap-2">
+              <Button size="xs" variant="secondary" onClick={() => setPayAmount(String(payFor.total - payFor.paid))}>To'liq</Button>
+              <Button size="xs" variant="secondary" onClick={() => setPayAmount(String(Math.round((payFor.total - payFor.paid) / 2)))}>Yarmi</Button>
+            </div>
+            <Field label="To'lov usuli">
+              <select className="input" value={payMethod} onChange={(e) => setPayMethod(e.target.value)}>
+                {Object.entries(PAY_METHODS).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+              </select>
+            </Field>
           </div>
         )}
       </Modal>
@@ -238,16 +517,17 @@ export default function Purchasing() {
   );
 }
 
-function PurchaseModal({ open, onClose, initialRows }) {
+function PurchaseModal({ open, onClose, prefill }) {
   const { state, dispatch } = useApp();
   const toast = useToast();
-  const [supplierId, setSupplierId] = useState(state.suppliers[0]?.id || '');
+  const [supplierId, setSupplierId] = useState(prefill?.supplierId || state.suppliers[0]?.id || '');
   const [rows, setRows] = useState([]);
   const [note, setNote] = useState('');
 
   useEffect(() => {
     if (open) {
-      setRows(initialRows?.length ? initialRows : [{ ingredientId: state.inventory[0]?.id, qty: 1, price: state.inventory[0]?.cost || 0 }]);
+      setRows(prefill?.rows?.length ? prefill.rows : [{ ingredientId: state.inventory[0]?.id, qty: 1, price: state.inventory[0]?.cost || 0 }]);
+      setSupplierId(prefill?.supplierId || state.suppliers[0]?.id || '');
       setNote('');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

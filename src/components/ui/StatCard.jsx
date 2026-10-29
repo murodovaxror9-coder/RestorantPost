@@ -7,9 +7,14 @@ const COLORS = {
   slate: 'bg-slate-100 text-slate-600',
 };
 
-export default function StatCard({ label, value, icon: Icon, hint, color = 'blue', trend }) {
+export default function StatCard({ label, value, icon: Icon, hint, color = 'blue', trend, onClick, active }) {
+  const Tag = onClick ? 'button' : 'div';
   return (
-    <div className="card p-4 flex items-start gap-3">
+    <Tag
+      type={onClick ? 'button' : undefined}
+      onClick={onClick}
+      className={`card p-4 flex items-start gap-3 w-full text-left ${onClick ? 'cursor-pointer hover:border-slate-300 transition' : ''} ${active ? 'ring-2 ring-blue-500' : ''}`}
+    >
       {Icon && (
         <div className={`shrink-0 w-10 h-10 rounded-xl flex items-center justify-center ${COLORS[color]}`}>
           <Icon size={20} />
@@ -29,6 +34,6 @@ export default function StatCard({ label, value, icon: Icon, hint, color = 'blue
           </div>
         )}
       </div>
-    </div>
+    </Tag>
   );
 }

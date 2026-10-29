@@ -4,6 +4,8 @@ import { PAYMENT_LABELS, ONLINE_STATUS, RES_STATUS } from '../data/labels';
 
 const now = () => new Date().toISOString();
 
+const SUPPLIER_PAY_METHOD_LABELS = { cash: 'Naqd', card: 'Karta', transfer: "Bank o'tkazmasi" };
+
 function log(state, type, action, details = '') {
   const entry = {
     id: uid(),
@@ -503,20 +505,22 @@ export function reducer(state, action) {
       if (p.status === 'cancelled') return state;
       const amount = Math.min(+action.amount, p.total - p.paid);
       if (amount <= 0) return state;
+      const method = action.method || 'cash';
+      const methodLabel = SUPPLIER_PAY_METHOD_LABELS[method] || method;
       const sup = state.suppliers.find((x) => x.id === p.supplierId);
       const s = {
         ...state,
         purchases: state.purchases.map((x) => {
           if (x.id !== p.id) return x;
           const paid = x.paid + amount;
-          return { ...x, paid, status: paid >= x.total && x.status !== 'ordered' ? 'paid' : x.status };
+          return { ...x, paid, paymentMethod: method, status: paid >= x.total && x.status !== 'ordered' ? 'paid' : x.status };
         }),
         expenses: [
-          { id: uid(), category: 'Xarid', amount, note: `Xarid #${p.number} · ${sup?.name}`, date: now(), userName: state.user?.name },
+          { id: uid(), category: 'Xarid', amount, method, note: `Xarid #${p.number} · ${sup?.name} · ${methodLabel}`, date: now(), userName: state.user?.name },
           ...state.expenses,
         ],
       };
-      return log(s, 'finance', "Yetkazib beruvchiga to'lov", `#${p.number} · ${sup?.name} · ${fmtNum(amount)} so'm`);
+      return log(s, 'finance', "Yetkazib beruvchiga to'lov", `#${p.number} · ${sup?.name} · ${fmtNum(amount)} so'm · ${methodLabel}`);
     }
 
     // ---------- CRM ----------
