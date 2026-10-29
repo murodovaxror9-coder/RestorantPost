@@ -1,0 +1,109 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-cream text-slate-800 antialiased dark:bg-slate-950 dark:text-slate-100;
+  }
+  input[type='number']::-webkit-inner-spin-button {
+    opacity: 0.4;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white rounded-2xl border border-slate-200/70 shadow-sm dark:bg-slate-800 dark:border-slate-700/70;
+  }
+  .input {
+    @apply w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-blue-500 dark:focus:ring-blue-500/20;
+  }
+  .label {
+    @apply block text-xs font-medium text-slate-600 mb-1 dark:text-slate-400;
+  }
+  .tbl {
+    @apply w-full text-sm;
+  }
+  .tbl th {
+    @apply text-left font-medium text-slate-500 text-xs uppercase tracking-wide px-4 py-3 bg-slate-50 border-b border-slate-100 whitespace-nowrap dark:text-slate-400 dark:bg-slate-800/60 dark:border-slate-700;
+  }
+  .tbl td {
+    @apply px-4 py-3 border-b border-slate-100 align-middle dark:border-slate-700/70;
+  }
+  .tbl tbody tr:hover {
+    @apply bg-slate-50/70 dark:bg-slate-700/30;
+  }
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+  }
+  .dark .scrollbar-thin {
+    scrollbar-color: #475569 transparent;
+  }
+}
+
+/*
+ * Dark-rejim uchun moslashtiruvchi qoidalar: loyihadagi 19 sahifa va
+ * komponentlarda ishlatilgan "neytral" (slate/white) va "yumshoq rangli
+ * belgi" (badge) klasslari har bir faylga alohida tegmasdan avtomatik
+ * qorong'i rejimga moslashadi. Bu qoidalar oddiy Tailwind utility
+ * klasslaridan (bitta sinf, specificity 0,1,0) ustunroq, chunki ".dark"
+ * ota-ona selektori qo'shilgan (0,2,0) — shu sabab tartibdan qat'i nazar
+ * ishlaydi.
+ */
+.dark .bg-white { background-color: #1e293b; }
+.dark .bg-white\/90 { background-color: rgb(15 23 42 / 0.9); }
+.dark .text-slate-800 { color: #f1f5f9; }
+.dark .text-slate-700 { color: #e2e8f0; }
+.dark .text-slate-600 { color: #cbd5e1; }
+.dark .text-slate-500 { color: #94a3b8; }
+.dark .text-slate-400 { color: #64748b; }
+.dark .bg-slate-50 { background-color: rgb(15 23 42 / 0.4); }
+.dark .bg-slate-50\/70 { background-color: rgb(51 65 85 / 0.3); }
+.dark .bg-slate-100 { background-color: #334155; }
+.dark .bg-slate-100\/70 { background-color: rgb(51 65 85 / 0.5); }
+.dark .bg-slate-200 { background-color: #475569; }
+.dark .border-slate-100 { border-color: #334155; }
+.dark .border-slate-200 { border-color: #334155; }
+.dark .hover\:bg-slate-50:hover { background-color: rgb(51 65 85 / 0.5); }
+.dark .hover\:bg-slate-100:hover { background-color: #334155; }
+.dark .hover\:bg-slate-200:hover { background-color: #475569; }
+.dark .hover\:text-slate-800:hover { color: #f1f5f9; }
+.dark .hover\:text-slate-900:hover { color: #f8fafc; }
+.dark .hover\:border-blue-400:hover { border-color: #6366f1; }
+
+/* Yumshoq rangli belgilar (badge/status chip) uchun qorong'i variant */
+.dark .bg-blue-50 { background-color: rgb(49 46 129 / 0.35); }
+.dark .bg-blue-100 { background-color: rgb(55 48 163 / 0.45); }
+.dark .text-blue-700 { color: #a5b4fc; }
+.dark .text-blue-600 { color: #a5b4fc; }
+.dark .bg-emerald-50 { background-color: rgb(6 78 59 / 0.35); }
+.dark .bg-emerald-100 { background-color: rgb(6 78 59 / 0.5); }
+.dark .text-emerald-700 { color: #6ee7b7; }
+.dark .text-emerald-600 { color: #6ee7b7; }
+.dark .bg-amber-50 { background-color: rgb(120 53 15 / 0.35); }
+.dark .bg-amber-100 { background-color: rgb(120 53 15 / 0.5); }
+.dark .text-amber-700 { color: #fcd34d; }
+.dark .text-amber-600 { color: #fcd34d; }
+.dark .bg-rose-50 { background-color: rgb(136 19 55 / 0.35); }
+.dark .bg-rose-100 { background-color: rgb(136 19 55 / 0.5); }
+.dark .text-rose-700 { color: #fda4af; }
+.dark .text-rose-600 { color: #fda4af; }
+.dark .bg-violet-50 { background-color: rgb(76 29 149 / 0.35); }
+.dark .bg-violet-100 { background-color: rgb(76 29 149 / 0.5); }
+.dark .text-violet-700 { color: #c4b5fd; }
+.dark .text-violet-600 { color: #c4b5fd; }
+.dark .bg-cyan-100 { background-color: rgb(22 78 99 / 0.5); }
+.dark .text-cyan-700 { color: #67e8f9; }
+
+@keyframes pop {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.animate-in { animation: pop 0.18s ease-out; }
+
+@media print {
+  body * { visibility: hidden !important; }
+  .print-area, .print-area * { visibility: visible !important; }
+  .print-area { position: fixed; left: 0; top: 0; width: 80mm; padding: 4mm; }
+}
